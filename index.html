@@ -1,0 +1,730 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Advanced BFS/DFS Shortest Path Visualizer</title>
+    <link rel="stylesheet" href="style.css">
+    
+</head>
+
+<body>
+    <h1>BFS/DFS Shortest Path Visualizer</h1>
+    <div class="controls">
+        <select id="algorithmSelect">
+            <option value="bfs">BFS</option>
+            <option value="dfs">DFS</option>
+            <option value="both" selected>BFS vs DFS</option>
+        </select>
+        <button onclick="setMode('addNode')">Add Node</button>
+        <button onclick="setMode('addEdge')">Add Edge</button>
+        <input type="number" id="edgeWeight" placeholder="Weight" min="1" style="width: 80px;">
+        <button onclick="setMode('deleteNode')">Delete Node</button>
+        <button onclick="setMode('deleteEdge')">Delete Edge</button>
+        <button onclick="setMode('setStart')">Set Start</button>
+        <button onclick="setMode('setEnd')">Set End</button>
+        <button onclick="runAlgorithm()">Run Algorithm</button>
+        <button onclick="pauseResume()">Pause/Resume</button>
+        <button onclick="stepForward()">Step Forward</button>
+        <button onclick="resetGraph()">Reset</button>
+        <label>Speed:
+            <input type="range" min="100" max="1000" value="500" id="speedSlider">
+        </label>
+        <select id="predefinedGraphSelect">
+            <option value="">Select Predefined Graph</option>
+            <option value="linear">Linear Graph</option>
+            <option value="cycle">Cycle Graph</option>
+            <option value="grid">Grid Graph</option>
+            <option value="star">Star Graph</option>
+            <option value="tree">Tree Graph</option>
+            <option value="disconnected">Disconnected Graph</option>
+        </select>
+        <button onclick="loadPredefinedGraph()">Load Graph</button>
+        <button onclick="openMatrixInput()">Input Adjacency Matrix</button>
+    </div>
+    <div id="alertContainer"></div>
+    <div class="main-container" style="margin-top: 10px;">
+        <div class="sidebar">
+            <h3>Debug Output</h3>
+            <div class="debug" id="debugPanel"></div>
+            <p><strong>Time Complexity:</strong><br>
+                BFS: O(V + E), DFS: O(V + E)<br>
+                <strong>Space Complexity:</strong><br>
+                BFS: O(V), DFS: O(V)<br>
+                (V = vertices, E = edges)
+            </p>
+        </div>
+        <div class="canvas-container">
+            <div class="canvas-label">BFS Visualization</div>
+            <canvas id="bfsCanvas" width="450" height="600"></canvas>
+        </div>
+        <div class="canvas-container">
+            <div class="canvas-label">DFS Visualization</div>
+            <canvas id="dfsCanvas" width="450" height="600"></canvas>
+        </div>
+    </div>
+    <div class="legend">
+        <div><span style="color: yellow">■</span> BFS Visited</div>
+        <div><span style="color: orange">■</span> BFS Queued</div>
+        <div><span style="color: limegreen">■</span> BFS Path</div>
+        <div><span style="color: #ffcc00">■</span> DFS Visited</div>
+        <div><span style="color: #ff9900">■</span> DFS Stack</div>
+        <div><span style="color: #00cc00">■</span> DFS Path</div>
+    </div>
+    <div id="matrixModal" class="modal">
+        <div class="modal-content">
+            <h3>Input Adjacency Matrix</h3>
+            <p>Enter the adjacency matrix (space-separated numbers, each row on a new line). Use 0 for no edge, positive numbers for edge weights.</p>
+            <textarea id="matrixInput" placeholder="Example:\n0 1 0\n1 0 2\n0 2 0"></textarea>
+            <button onclick="loadMatrixGraph()">Load Matrix</button>
+            <button onclick="closeMatrixModal()">Cancel</button>
+        </div>
+    </div>
+    <script>
+        const bfsCanvas = document.getElementById("bfsCanvas");
+        const dfsCanvas = document.getElementById("dfsCanvas");
+        const bfsCtx = bfsCanvas.getContext("2d");
+        const dfsCtx = dfsCanvas.getContext("2d");
+        const debugPanel = document.getElementById("debugPanel");
+        const alertContainer = document.getElementById("alertContainer");
+        const speedSlider = document.getElementById("speedSlider");
+        const weightInput = document.getElementById("edgeWeight");
+        const algorithmSelect = document.getElementById("algorithmSelect");
+        const matrixModal = document.getElementById("matrixModal");
+        const matrixInput = document.getElementById("matrixInput");
+
+        let mode = "addNode";
+        let nodes = [], edges = [];
+        let nodeId = 0;
+        let startNode = null, endNode = null;
+        let isBidirectional = true;
+        let isPaused = false;
+        let animationId = null;
+        let stepMode = false;
+
+        function showAlert(message) {
+            alertContainer.innerHTML = `<div class="alertBox">⚠️ ${message}</div>`;
+            setTimeout(() => alertContainer.innerHTML = '', 4000);
+        }
+
+        function setMode(m) {
+            mode = m;
+            showAlert(`Mode changed to: ${m}`);
+        }
+
+        function toggleBidirectional() {
+            isBidirectional = !isBidirectional;
+            showAlert("Bidirectional: " + isBidirectional);
+        }
+
+        function openMatrixInput() {
+            matrixModal.style.display = 'flex';
+        }
+
+        function closeMatrixModal() {
+            matrixModal.style.display = 'none';
+            matrixInput.value = '';
+        }
+
+        function loadMatrixGraph() {
+            const input = matrixInput.value.trim();
+            if (!input) {
+                showAlert("Please enter an adjacency matrix");
+                return;
+            }
+            try {
+                const matrix = input.split('\n').map(row => row.trim().split(/\s+/).map(Number));
+                const n = matrix.length;
+                if (matrix.some(row => row.length !== n)) {
+                    showAlert("Matrix must be square (same number of rows and columns)");
+                    return;
+                }
+                // if (n > 20) {
+                //     showAlert("Matrix size limited to 20x20 for visualization");
+                //     return;
+                // }
+
+                // Reset graph
+                nodes = [];
+                edges = [];
+                nodeId = 0;
+                startNode = 0;
+                endNode = n - 1;
+
+                // Generate nodes in a grid layout
+                const canvasWidth = bfsCanvas.width - 40;
+                const canvasHeight = bfsCanvas.height - 40;
+                const cols = Math.ceil(Math.sqrt(n));
+                const rows = Math.ceil(n / cols);
+                const xStep = canvasWidth / (cols + 1);
+                const yStep = canvasHeight / (rows + 1);
+                
+                for (let i = 0; i < n; i++) {
+                    const row = Math.floor(i / cols);
+                    const col = i % cols;
+                    nodes.push({
+                        id: i,
+                        x: 40 + (col + 1) * xStep,
+                        y: 40 + (row + 1) * yStep
+                    });
+                    nodeId = i + 1;
+                }
+
+                // Generate edges from matrix
+                for (let i = 0; i < n; i++) {
+                    for (let j = 0; j < n; j++) {
+                        if (matrix[i][j] > 0) {
+                            edges.push({ from: i, to: j, weight: matrix[i][j] });
+                            if (isBidirectional && matrix[j][i] === 0) {
+                                edges.push({ from: j, to: i, weight: matrix[i][j] });
+                            }
+                        }
+                    }
+                }
+
+                drawGraph(bfsCtx, bfsCanvas, [], []);
+                drawGraph(dfsCtx, dfsCanvas, [], []);
+                debugPanel.innerText = '';
+                showAlert("Loaded graph from adjacency matrix");
+                closeMatrixModal();
+            } catch (e) {
+                showAlert("Invalid matrix format. Use space-separated numbers, each row on a new line.");
+            }
+        }
+
+        bfsCanvas.addEventListener("click", e => {
+            if (isPaused && !stepMode) return;
+            const x = e.offsetX, y = e.offsetY;
+            if (mode === 'addNode') {
+                nodes.push({ id: nodeId++, x, y });
+            } else {
+                const clicked = getClickedNode(x, y);
+                if (!clicked) return;
+                if (mode === 'addEdge') {
+                    if (!window.tempEdge) {
+                        window.tempEdge = clicked;
+                    } else {
+                        if (clicked.id !== window.tempEdge.id) {
+                            let weight = parseInt(weightInput.value);
+                            if (isNaN(weight) || weight < 1) {
+                                showAlert("Please enter a valid EDGE weight (≥ 1)");
+                                delete window.tempEdge;
+                                return;
+                            }
+                            edges.push({ from: window.tempEdge.id, to: clicked.id, weight });
+                            if (isBidirectional) edges.push({ from: clicked.id, to: window.tempEdge.id, weight });
+                        }
+                        delete window.tempEdge;
+                    }
+                } else if (mode === 'deleteNode') {
+                    edges = edges.filter(e => e.from !== clicked.id && e.to !== clicked.id);
+                    nodes = nodes.filter(n => n.id !== clicked.id);
+                    if (startNode === clicked.id) startNode = null;
+                    if (endNode === clicked.id) endNode = null;
+                } else if (mode === 'deleteEdge') {
+                    if (!window.tempEdge) {
+                        window.tempEdge = clicked;
+                    } else {
+                        if (clicked.id !== window.tempEdge.id) {
+                            edges = edges.filter(e => !(e.from === window.tempEdge.id && e.to === clicked.id) && !(isBidirectional && e.from === clicked.id && e.to === window.tempEdge.id));
+                        }
+                        delete window.tempEdge;
+                    }
+                } else if (mode === 'setStart') {
+                    startNode = clicked.id;
+                } else if (mode === 'setEnd') {
+                    endNode = clicked.id;
+                }
+            }
+            drawGraph(bfsCtx, bfsCanvas, [], []);
+            drawGraph(dfsCtx, dfsCanvas, [], []);
+        });
+
+        function getClickedNode(x, y) {
+            return nodes.find(n => Math.hypot(n.x - x, n.y - y) < 20);
+        }
+
+        function drawGraph(ctx, canvas, bfsPath = [], dfsPath = []) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            edges.forEach(e => {
+                const from = nodes.find(n => n.id === e.from);
+                const to = nodes.find(n => n.id === e.to);
+                if (!from || !to) return;
+                ctx.beginPath();
+                ctx.moveTo(from.x, from.y);
+                ctx.lineTo(to.x, to.y);
+                ctx.strokeStyle = "#aaa";
+                ctx.lineWidth = 2;
+                ctx.stroke();
+                ctx.fillStyle = "#444";
+                ctx.font = "12px sans-serif";
+                ctx.fillText(e.weight || 1, (from.x + to.x) / 2, (from.y + to.y) / 2);
+            });
+            nodes.forEach(n => {
+                ctx.beginPath();
+                ctx.arc(n.x, n.y, 20, 0, Math.PI * 2);
+                if (bfsPath.includes(n.id)) ctx.fillStyle = "limegreen";
+                else if (dfsPath.includes(n.id)) ctx.fillStyle = "#00cc00";
+                else if (n.id === startNode) ctx.fillStyle = "red";
+                else if (n.id === endNode) ctx.fillStyle = "blue";
+                else ctx.fillStyle = "lightblue";
+                ctx.fill();
+                ctx.strokeStyle = "#333";
+                ctx.lineWidth = 1;
+                ctx.stroke();
+                ctx.fillStyle = "black";
+                ctx.font = "bold 14px sans-serif";
+                ctx.fillText(n.id, n.x - 5, n.y + 5);
+            });
+        }
+
+        async function runBFS(animationState, resolve) {
+            if (startNode == null || endNode == null) {
+                showAlert("Set both start and end nodes");
+                resolve();
+                return;
+            }
+            let queue = animationState.bfs?.queue || [{ id: startNode, distance: 0 }];
+            let visited = animationState.bfs?.visited || new Set([startNode]);
+            let parent = animationState.bfs?.parent || {};
+            let distances = animationState.bfs?.distances || { [startNode]: 0 };
+            let animationSpeed = parseInt(speedSlider.value);
+
+            while (queue.length > 0) {
+                if (isPaused && !stepMode) {
+                    animationState.bfs = { queue, visited, parent, distances };
+                    return;
+                }
+                debugPanel.innerText += `BFS Queue: [${queue.map(n => n.id).join(", ")}], Visited: [${[...visited].join(", ")}], Distances: ${JSON.stringify(distances)}\n`;
+                const current = queue.shift();
+                if (current.id === endNode) break;
+                const neighbors = edges.filter(e => e.from === current.id);
+                for (let e of neighbors) {
+                    let n = e.to;
+                    if (!visited.has(n)) {
+                        visited.add(n);
+                        parent[n] = current.id;
+                        distances[n] = current.distance + e.weight;
+                        queue.push({ id: n, distance: distances[n] });
+                    }
+                }
+                drawGraph(bfsCtx, bfsCanvas, animationState.bfsPath || [], []);
+                visited.forEach(id => {
+                    const node = nodes.find(n => n.id === id);
+                    if (!node) return;
+                    bfsCtx.beginPath();
+                    bfsCtx.arc(node.x, node.y, 20, 0, Math.PI * 2);
+                    bfsCtx.fillStyle = "yellow";
+                    bfsCtx.fill();
+                    bfsCtx.stroke();
+                });
+                queue.forEach(n => {
+                    const node = nodes.find(n2 => n2.id === n.id);
+                    if (!node) return;
+                    bfsCtx.beginPath();
+                    bfsCtx.arc(node.x, node.y, 20, 0, Math.PI * 2);
+                    bfsCtx.fillStyle = "orange";
+                    bfsCtx.fill();
+                    bfsCtx.stroke();
+                });
+                if (animationState.dfsPath) {
+                    drawGraph(dfsCtx, dfsCanvas, [], animationState.dfsPath);
+                }
+                if (!stepMode) {
+                    await new Promise(r => setTimeout(r, animationSpeed));
+                }
+                if (stepMode) {
+                    animationState.bfs = { queue, visited, parent, distances };
+                    isPaused = true;
+                    return;
+                }
+            }
+
+            let path = [];
+            let totalDistance = distances[endNode] || 0;
+            let temp = endNode;
+            while (temp !== undefined) {
+                path.push(temp);
+                temp = parent[temp];
+            }
+            path.reverse();
+            if (path[0] !== startNode) {
+                showAlert("No BFS path found between Start and End nodes");
+                resolve();
+                return;
+            }
+            debugPanel.innerText += `\nBFS Final Path: [${path.join(" → ")}], Total Distance: ${totalDistance}\n`;
+            animationState.bfsPath = path;
+            drawGraph(bfsCtx, bfsCanvas, animationState.bfsPath, []);
+            resolve();
+        }
+
+        async function runDFS(animationState, resolve) {
+            if (startNode == null || endNode == null) {
+                showAlert("Set both start and end nodes");
+                resolve();
+                return;
+            }
+            let stack = animationState.dfs?.stack || [{ id: startNode, distance: 0 }];
+            let visited = animationState.dfs?.visited || new Set([startNode]);
+            let parent = animationState.dfs?.parent || {};
+            let distances = animationState.dfs?.distances || { [startNode]: 0 };
+            let animationSpeed = parseInt(speedSlider.value);
+
+            while (stack.length > 0) {
+                if (isPaused && !stepMode) {
+                    animationState.dfs = { stack, visited, parent, distances };
+                    return;
+                }
+                debugPanel.innerText += `DFS Stack: [${stack.map(n => n.id).join(", ")}], Visited: [${[...visited].join(", ")}], Distances: ${JSON.stringify(distances)}\n`;
+                const current = stack.pop();
+                if (current.id === endNode) break;
+                const neighbors = edges.filter(e => e.from === current.id);
+                for (let e of neighbors) {
+                    let n = e.to;
+                    if (!visited.has(n)) {
+                        visited.add(n);
+                        parent[n] = current.id;
+                        distances[n] = current.distance + e.weight;
+                        stack.push({ id: n, distance: distances[n] });
+                    }
+                }
+                drawGraph(dfsCtx, dfsCanvas, [], animationState.dfsPath || []);
+                visited.forEach(id => {
+                    const node = nodes.find(n => n.id === id);
+                    if (!node) return;
+                    dfsCtx.beginPath();
+                    dfsCtx.arc(node.x, node.y, 20, 0, Math.PI * 2);
+                    dfsCtx.fillStyle = "#ffcc00";
+                    dfsCtx.fill();
+                    dfsCtx.stroke();
+                });
+                stack.forEach(n => {
+                    const node = nodes.find(n2 => n2.id === n.id);
+                    if (!node) return;
+                    dfsCtx.beginPath();
+                    dfsCtx.arc(node.x, node.y, 20, 0, Math.PI * 2);
+                    dfsCtx.fillStyle = "#ff9900";
+                    dfsCtx.fill();
+                    dfsCtx.stroke();
+                });
+                if (animationState.bfsPath) {
+                    drawGraph(bfsCtx, bfsCanvas, animationState.bfsPath, []);
+                }
+                if (!stepMode) {
+                    await new Promise(r => setTimeout(r, animationSpeed));
+                }
+                if (stepMode) {
+                    animationState.dfs = { stack, visited, parent, distances };
+                    isPaused = true;
+                    return;
+                }
+            }
+
+            let path = [];
+            let totalDistance = distances[endNode] || 0;
+            let temp = endNode;
+            while (temp !== undefined) {
+                path.push(temp);
+                temp = parent[temp];
+            }
+            path.reverse();
+            if (path[0] !== startNode) {
+                showAlert("No DFS path found between Start and End nodes");
+                resolve();
+                return;
+            }
+            debugPanel.innerText += `\nDFS Final Path: [${path.join(" → ")}], Total Distance: ${totalDistance}\n`;
+            animationState.dfsPath = path;
+            drawGraph(dfsCtx, dfsCanvas, [], animationState.dfsPath);
+            resolve();
+        }
+
+        function pauseResume() {
+            if (!animationId) {
+                showAlert("No active animation to pause/resume");
+                return;
+            }
+            isPaused = !isPaused;
+            showAlert(isPaused ? "Paused" : "Resumed");
+            if (!isPaused && animationId) {
+                const algorithm = algorithmSelect.value;
+                if (algorithm === "bfs") {
+                    runBFS(animationId.state, animationId.resolve);
+                } else if (algorithm === "dfs") {
+                    runDFS(animationId.state, animationId.resolve);
+                } else if (algorithm === "both") {
+                    Promise.all([
+                        new Promise(resolve => runBFS(animationId.state, resolve)),
+                        new Promise(resolve => runDFS(animationId.state, resolve))
+                    ]);
+                }
+            }
+        }
+
+        function stepForward() {
+            if (!animationId) {
+                showAlert("No active animation to step through");
+                return;
+            }
+            if (!isPaused) {
+                isPaused = true;
+                showAlert("Paused for stepping");
+            }
+            stepMode = true;
+            const algorithm = algorithmSelect.value;
+            if (algorithm === "bfs" && animationId.state.bfs) {
+                runBFS(animationId.state, animationId.resolve);
+                drawGraph(dfsCtx, dfsCanvas, [], animationId.state.dfsPath || []);
+            } else if (algorithm === "dfs" && animationId.state.dfs) {
+                runDFS(animationId.state, animationId.resolve);
+                drawGraph(bfsCtx, bfsCanvas, animationId.state.bfsPath || [], []);
+            } else if (algorithm === "both") {
+                Promise.all([
+                    new Promise(resolve => runBFS(animationId.state, animationId.resolve)),
+                    new Promise(resolve => runDFS(animationId.state, animationId.resolve))
+                ]).then(() => {
+                    stepMode = false;
+                });
+            } else {
+                showAlert("No animation state to step through");
+                stepMode = false;
+            }
+        }
+
+        function runAlgorithm() {
+            if (nodes.length === 0) {
+                showAlert("No nodes in the graph");
+                return;
+            }
+            const algorithm = algorithmSelect.value;
+            isPaused = false;
+            stepMode = false;
+            animationId = { state: {}, resolve: null };
+            showAlert(`Running ${algorithm.toUpperCase()}`);
+            debugPanel.innerText = '';
+            if (algorithm === "bfs") {
+                new Promise(resolve => {
+                    animationId.resolve = resolve;
+                    runBFS(animationId.state, resolve);
+                    drawGraph(dfsCtx, dfsCanvas, [], []); // Clear DFS canvas
+                });
+            } else if (algorithm === "dfs") {
+                new Promise(resolve => {
+                    animationId.resolve = resolve;
+                    runDFS(animationId.state, resolve);
+                    drawGraph(bfsCtx, bfsCanvas, [], []); // Clear BFS canvas
+                });
+            } else if (algorithm === "both") {
+                new Promise(resolve => {
+                    animationId.resolve = resolve;
+                    Promise.all([
+                        runBFS(animationId.state, resolve),
+                        runDFS(animationId.state, resolve)
+                    ]);
+                });
+            }
+        }
+
+        function resetGraph() {
+            nodes = [];
+            edges = [];
+            nodeId = 0;
+            startNode = null;
+            endNode = null;
+            isPaused = false;
+            stepMode = false;
+            animationId = null;
+            drawGraph(bfsCtx, bfsCanvas, [], []);
+            drawGraph(dfsCtx, dfsCanvas, [], []);
+            debugPanel.innerText = '';
+            showAlert("Graph reset");
+        }
+
+        const predefinedGraphs = {
+            linear: {
+                nodes: [
+                    { id: 0, x: 100, y: 300 },
+                    { id: 1, x: 200, y: 300 },
+                    { id: 2, x: 300, y: 300 },
+                    { id: 3, x: 400, y: 300 }
+                ],
+                edges: [
+                    { from: 0, to: 1, weight: 1 },
+                    { from: 1, to: 2, weight: 1 },
+                    { from: 2, to: 3, weight: 1 },
+                    { from: 1, to: 0, weight: 1 },
+                    { from: 2, to: 1, weight: 1 },
+                    { from: 3, to: 2, weight: 1 }
+                ],
+                startNode: 0,
+                endNode: 3
+            },
+            cycle: {
+                nodes: [
+                    { id: 0, x: 150, y: 200 },
+                    { id: 1, x: 250, y: 200 },
+                    { id: 2, x: 250, y: 400 },
+                    { id: 3, x: 150, y: 400 }
+                ],
+                edges: [
+                    { from: 0, to: 1, weight: 1 },
+                    { from: 1, to: 2, weight: 1 },
+                    { from: 2, to: 3, weight: 1 },
+                    { from: 3, to: 0, weight: 1 },
+                    { from: 1, to: 0, weight: 1 },
+                    { from: 2, to: 1, weight: 1 },
+                    { from: 3, to: 2, weight: 1 },
+                    { from: 0, to: 3, weight: 1 }
+                ],
+                startNode: 0,
+                endNode: 2
+            },
+            grid: {
+                nodes: [
+                    { id: 0, x: 100, y: 200 },
+                    { id: 1, x: 200, y: 200 },
+                    { id: 2, x: 300, y: 200 },
+                    { id: 3, x: 100, y: 400 },
+                    { id: 4, x: 200, y: 400 },
+                    { id: 5, x: 300, y: 400 }
+                ],
+                edges: [
+                    { from: 0, to: 1, weight: 1 },
+                    { from: 1, to: 2, weight: 1 },
+                    { from: 0, to: 3, weight: 1 },
+                    { from: 1, to: 4, weight: 1 },
+                    { from: 2, to: 5, weight: 1 },
+                    { from: 3, to: 4, weight: 1 },
+                    { from: 4, to: 5, weight: 1 },
+                    { from: 1, to: 0, weight: 1 },
+                    { from: 2, to: 1, weight: 1 },
+                    { from: 3, to: 0, weight: 1 },
+                    { from: 4, to: 1, weight: 1 },
+                    { from: 5, to: 2, weight: 1 },
+                    { from: 4, to: 3, weight: 1 },
+                    { from: 5, to: 4, weight: 1 }
+                ],
+                startNode: 0,
+                endNode: 5
+            },
+            star: {
+                nodes: [
+                    { id: 0, x: 225, y: 300 },
+                    { id: 1, x: 175, y: 200 },
+                    { id: 2, x: 275, y: 200 },
+                    { id: 3, x: 175, y: 400 },
+                    { id: 4, x: 275, y: 400 },
+                    { id: 5, x: 150, y: 250 },
+                    { id: 6, x: 300, y: 250 }
+                ],
+                edges: [
+                    { from: 0, to: 1, weight: 2 },
+                    { from: 0, to: 2, weight: 1 },
+                    { from: 0, to: 3, weight: 3 },
+                    { from: 0, to: 4, weight: 2 },
+                    { from: 0, to: 5, weight: 1 },
+                    { from: 0, to: 6, weight: 3 },
+                    { from: 1, to: 0, weight: 2 },
+                    { from: 2, to: 0, weight: 1 },
+                    { from: 3, to: 0, weight: 3 },
+                    { from: 4, to: 0, weight: 2 },
+                    { from: 5, to: 0, weight: 1 },
+                    { from: 6, to: 0, weight: 3 }
+                ],
+                startNode: 1,
+                endNode: 4
+            },
+            tree: {
+                nodes: [
+                    { id: 0, x: 225, y: 100 },
+                    { id: 1, x: 175, y: 200 },
+                    { id: 2, x: 275, y: 200 },
+                    { id: 3, x: 150, y: 300 },
+                    { id: 4, x: 200, y: 300 },
+                    { id: 5, x: 250, y: 300 },
+                    { id: 6, x: 300, y: 300 },
+                    { id: 7, x: 125, y: 400 },
+                    { id: 8, x: 175, y: 400 },
+                    { id: 9, x: 275, y: 400 }
+                ],
+                edges: [
+                    { from: 0, to: 1, weight: 1 },
+                    { from: 0, to: 2, weight: 1 },
+                    { from: 1, to: 3, weight: 2 },
+                    { from: 1, to: 4, weight: 2 },
+                    { from: 2, to: 5, weight: 2 },
+                    { from: 2, to: 6, weight: 2 },
+                    { from: 3, to: 7, weight: 3 },
+                    { from: 3, to: 8, weight: 3 },
+                    { from: 6, to: 9, weight: 3 },
+                    { from: 1, to: 0, weight: 1 },
+                    { from: 2, to: 0, weight: 1 },
+                    { from: 3, to: 1, weight: 2 },
+                    { from: 4, to: 1, weight: 2 },
+                    { from: 5, to: 2, weight: 2 },
+                    { from: 6, to: 2, weight: 2 },
+                    { from: 7, to: 3, weight: 3 },
+                    { from: 8, to: 3, weight: 3 },
+                    { from: 9, to: 6, weight: 3 }
+                ],
+                startNode: 0,
+                endNode: 8
+            },
+            disconnected: {
+                nodes: [
+                    { id: 0, x: 100, y: 200 },
+                    { id: 1, x: 150, y: 200 },
+                    { id: 2, x: 125, y: 300 },
+                    { id: 3, x: 300, y: 200 },
+                    { id: 4, x: 350, y: 200 },
+                    { id: 5, x: 325, y: 300 },
+                    { id: 6, x: 300, y: 400 },
+                    { id: 7, x: 350, y: 400 }
+                ],
+                edges: [
+                    { from: 0, to: 1, weight: 1 },
+                    { from: 1, to: 2, weight: 1 },
+                    { from: 2, to: 0, weight: 1 },
+                    { from: 1, to: 0, weight: 1 },
+                    { from: 2, to: 1, weight: 1 },
+                    { from: 0, to: 2, weight: 1 },
+                    { from: 3, to: 4, weight: 2 },
+                    { from: 4, to: 5, weight: 2 },
+                    { from: 5, to: 6, weight: 2 },
+                    { from: 6, to: 7, weight: 2 },
+                    { from: 4, to: 3, weight: 2 },
+                    { from: 5, to: 4, weight: 2 },
+                    { from: 6, to: 5, weight: 2 },
+                    { from: 7, to: 6, weight: 2 }
+                ],
+                startNode: 0,
+                endNode: 5
+            }
+        };
+
+        function loadPredefinedGraph() {
+            const selectedGraph = document.getElementById("predefinedGraphSelect").value;
+            if (!selectedGraph) {
+                showAlert("Please select a predefined graph");
+                return;
+            }
+            const graph = predefinedGraphs[selectedGraph];
+            nodes = graph.nodes;
+            edges = graph.edges;
+            nodeId = Math.max(...graph.nodes.map(n => n.id)) + 1;
+            startNode = graph.startNode;
+            endNode = graph.endNode;
+            drawGraph(bfsCtx, bfsCanvas, [], []);
+            drawGraph(dfsCtx, dfsCanvas, [], []);
+            debugPanel.innerText = '';
+            showAlert(`Loaded ${selectedGraph} graph`);
+        }
+
+        drawGraph(bfsCtx, bfsCanvas, [], []);
+        drawGraph(dfsCtx, dfsCanvas, [], []);
+    </script>
+</body>
+
+</html>
